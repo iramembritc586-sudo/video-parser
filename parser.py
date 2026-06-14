@@ -163,9 +163,11 @@ def parse_with_ytdlp(url: str, log=lambda m: None) -> ParseResult:
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
-        "noplaylist": False,
+        "noplaylist": True,        # 默认只解析单个视频，避免整个播放列表卡很久
+        "playlist_items": "1",
         "logger": _Logger(),
         "extract_flat": False,
+        "socket_timeout": 20,      # 网络超时，避免无限挂起
     }
     log("用 yt-dlp 解析中…")
     with yt_dlp.YoutubeDL(opts) as ydl:

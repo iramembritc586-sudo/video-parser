@@ -56,9 +56,25 @@ def api_parse():
     if not url:
         return jsonify(error="请输入网址"), 400
     logs: list[str] = []
-    res = vp.parse(url, log=logs.append)
-    if res.error and not res.streams:
-        return jsonify(error=res.error, logs=logs), 200
+
+    # 超时保护：某些网址会让 yt-dlp 卡死，超过 45 秒就返回提示而非无限等待
+    box: dict = {}
+
+    def work():
+        try:
+            box["res"] = vp.parse(url, log=logs.append)
+        except Exception as e:  # noqa: BLE001
+            box["res"] = vp.ParseResult(error=f"解析出错：{e}")
+
+    th = threading.Thread(target=work, daemon=True)
+    th.start()
+    th.join(45)
+    if th.is_alive():
+        return jsonify(error="解析超时（该网址可能不支持，或网络太慢）。"
+                             "请检查网址，或换一个试试。", logs=logs[-8:]), 200
+    res = box.get("res")
+    if res is None or (res.error and not res.streams):
+        return jsonify(error=(res.error if res else "解析失败"), logs=logs), 200
     STATE["streams"] = res.streams
     STATE["page"] = res.webpage_url or url
     STATE["title"] = res.title
@@ -71,6 +87,22 @@ def api_parse():
         if "av01" in vc:
             return "AV1"
         return vc.split(".")[0] if vc and vc != "none" else ""
+
+    def mse_type(s):
+        """分离流走 MSE 播放所需的 MIME codecs 串；浏览器不支持的(如HEVC)返回空。"""
+        if not s.audio_url:
+            return ""
+        vc, ac = s.vcodec, s.acodec
+        # 归一化常见编码到 RFC6381
+        if vc.startswith(("hev", "hvc")):   # Chrome 多不支持 HEVC，MSE 会失败
+            return ""
+        if vc == "vp9":
+            vc = "vp09.00.40.08"
+        if ac in ("", "none") or ac.startswith("mp4a") is False and "opus" not in ac:
+            ac = "mp4a.40.2"
+        if "opus" in ac:
+            ac = "opus"
+        return f'video/mp4; codecs="{vc},{ac}"'
 
     streams = [{
         "i": i,
@@ -85,6 +117,7 @@ def api_parse():
         "source": s.source,
         "needs_referer": bool(s.referer),
         "split": bool(s.audio_url),
+        "mse": mse_type(s),
     } for i, s in enumerate(res.streams)]
     return jsonify(title=res.title, duration=res.duration_human,
                    count=len(streams), streams=streams, logs=logs)
@@ -164,21 +197,26 @@ def _download_job(job_id, s, page, out):
         job["line"] = str(e)[:120]
 
 
-@app.post("/api/download/<int:i>")
-def api_download(i):
+def _start_job(i):
     if i >= len(STATE["streams"]):
-        return jsonify(error="无效的流"), 404
+        return None
     s = STATE["streams"][i]
     job_id = uuid.uuid4().hex
     safe = "".join(c for c in (STATE["title"] or "video")
                    if c.isalnum() or c in " _-")[:60].strip() or "video"
     tmpdir = tempfile.mkdtemp(prefix="vpweb_")
-    out = os.path.join(tmpdir, f"{safe}.{s.ext or 'mp4'}")
+    out = os.path.join(tmpdir, f"{safe}.mp4")
     JOBS[job_id] = {"state": "running", "status": "开始下载…", "line": "",
                     "name": os.path.basename(out)}
     threading.Thread(target=_download_job, args=(job_id, s, STATE["page"], out),
                      daemon=True).start()
-    return jsonify(job=job_id)
+    return job_id
+
+
+@app.post("/api/download/<int:i>")
+def api_download(i):
+    job_id = _start_job(i)
+    return (jsonify(job=job_id) if job_id else (jsonify(error="无效的流"), 404))
 
 
 @app.get("/api/download/status/<job_id>")
@@ -197,6 +235,22 @@ def api_dl_file(job_id):
         return "文件未就绪", 404
     return send_file(job["file"], as_attachment=True,
                      download_name=job["name"])
+
+
+# ---------------- 在线预览（分离流：下载合并后用普通 mp4 播放，最可靠） ----------------
+@app.post("/api/preview/<int:i>")
+def api_preview(i):
+    job_id = _start_job(i)
+    return (jsonify(job=job_id) if job_id else (jsonify(error="无效的流"), 404))
+
+
+@app.get("/api/preview/file/<job_id>")
+def api_preview_file(job_id):
+    job = JOBS.get(job_id)
+    if not job or job["state"] != "done" or not job.get("file"):
+        return "未就绪", 404
+    # conditional=True 支持 Range，浏览器可拖动进度
+    return send_file(job["file"], mimetype="video/mp4", conditional=True)
 
 
 # ---------------- B 站扫码登录 ----------------

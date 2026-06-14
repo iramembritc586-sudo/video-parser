@@ -12,14 +12,28 @@ function setStatus(m) { $("status").textContent = m; }
 
 $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") doParse(); });
 
+async function pasteUrl() {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) { $("url").value = t.trim(); doParse(); }
+  } catch (e) {
+    $("url").focus();
+    setStatus("无法自动读取剪贴板，请按 Ctrl+V 粘贴后回车");
+  }
+}
+
+function showPlaceholder(show) {
+  $("placeholder").style.display = show ? "block" : "none";
+}
+
 async function doParse() {
   const url = $("url").value.trim();
   if (!url) return;
   $("parseBtn").disabled = true;
   $("parseBtn").textContent = "解析中…";
   $("log").textContent = "";
-  $("player").style.display = "none";
-  $("player").pause(); $("player").removeAttribute("src");
+  $("player").pause(); $("player").removeAttribute("src"); $("player").load();
+  showPlaceholder(true);
   try {
     const r = await fetch("/api/parse", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -51,6 +65,8 @@ function renderRows() {
     const tr = document.createElement("tr");
     tr.className = "pick";
     tr.onclick = () => selectRow(s.i);
+    tr.ondblclick = () => selectAndPlay(s.i);
+    tr.title = "双击直接播放";
     tr.id = "row" + s.i;
     const tags = [];
     if (s.needs_referer) tags.push('<span class="tag">防盗链</span>');
@@ -69,11 +85,49 @@ function selectRow(i) {
 
 function playSel() {
   if (sel < 0) return;
+  const s = streams.find((x) => x.i === sel);
   const v = $("player");
-  v.style.display = "";
-  v.src = "/api/play/" + sel;
-  v.play().catch(() => {});
-  setStatus("在线播放中（防盗链/分离音视频由后端处理）…首帧需几秒");
+  v.pause(); v.removeAttribute("src"); v.load();
+  showPlaceholder(false);
+  $("stage").scrollIntoView({ behavior: "smooth", block: "center" });
+
+  // 合并流(单文件)：直接代理播放，秒开、可拖动
+  if (!s.split) {
+    v.src = "/api/play/" + sel;
+    v.play().catch(() => {});
+    setStatus("在线播放中…");
+    return;
+  }
+  // 分离音视频：后端先下载合并成普通 mp4，再播放（最可靠，可拖动）
+  setStatus("缓冲中（下载并合并，清晰度越高越久；想快可选低清）…");
+  previewSplit();
+}
+
+// 双击某一行 = 选中并直接播放
+function selectAndPlay(i) { selectRow(i); playSel(); }
+
+async function previewSplit() {
+  const d = await (await fetch("/api/preview/" + sel, { method: "POST" })).json();
+  if (d.error) { alert(d.error); return; }
+  pollPreview(d.job);
+}
+
+async function pollPreview(job) {
+  const d = await (await fetch("/api/download/status/" + job)).json();
+  if (d.state === "running") {
+    if (d.line) setStatus("缓冲中 — " + d.line);
+    setTimeout(() => pollPreview(job), 1000);
+    return;
+  }
+  if (d.state === "done") {
+    const v = $("player");
+    v.src = "/api/preview/file/" + job;
+    v.play().catch(() => {});
+    setStatus("▶ 播放中（已缓冲，可自由拖动）");
+  } else {
+    setStatus("✗ 缓冲失败");
+    alert("在线播放缓冲失败，详见日志");
+  }
 }
 
 async function downloadSel() {

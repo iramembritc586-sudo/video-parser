@@ -33,7 +33,10 @@
   .tag { font-size:11px; padding:2px 6px; border-radius:5px; background:#23304a; color:#cdf; }
   .actions { position:sticky; bottom:0; background:var(--bg); padding:12px 0;
              display:flex; gap:8px; flex-wrap:wrap; border-top:1px solid var(--line); margin-top:8px; }
-  video { width:100%; max-height:46vh; background:#000; border-radius:8px; margin-top:12px; display:none; }
+  #stage { position:relative; margin:12px 0; background:#000; border-radius:10px;
+           overflow:hidden; min-height:240px; display:flex; align-items:center; justify-content:center; }
+  video { width:100%; max-height:52vh; display:block; background:#000; }
+  #placeholder { position:absolute; color:#667; font-size:14px; pointer-events:none; }
   #log { background:#0a0c10; border:1px solid var(--line); border-radius:8px; padding:8px 10px;
          font:12px/1.5 monospace; color:#9aa0aa; height:90px; overflow:auto; margin-top:12px; white-space:pre-wrap; }
   .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
@@ -51,6 +54,7 @@
 
   <div class="bar">
     <input id="url" type="text" placeholder="粘贴视频网页地址，回车解析…" autofocus>
+    <button class="ghost" onclick="pasteUrl()">粘贴</button>
     <button id="parseBtn" onclick="doParse()">解析</button>
   </div>
 
@@ -61,18 +65,23 @@
     <span class="chip" id="durChip" style="display:none"></span>
   </div>
 
+  <!-- 视频播放区：始终可见，选中清晰度后在这里播放 -->
+  <div id="stage">
+    <video id="player" controls playsinline></video>
+    <div id="placeholder">解析后选择一条清晰度，点「在线播放」即可在此播放</div>
+  </div>
+
   <div id="result" style="display:none">
-    <table>
-      <thead><tr><th>清晰度</th><th>编码/格式</th><th>类型</th><th>码率</th><th>大小</th><th>来源</th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
-    <video id="player" controls></video>
     <div class="actions">
       <button onclick="playSel()">▶ 在线播放</button>
       <button onclick="downloadSel()">⬇ 下载选中</button>
       <button class="ghost" onclick="copySel()">复制地址</button>
       <span class="status" id="status"></span>
     </div>
+    <table>
+      <thead><tr><th>清晰度</th><th>编码/格式</th><th>类型</th><th>码率</th><th>大小</th><th>来源</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
   </div>
 
   <div id="log"></div>
