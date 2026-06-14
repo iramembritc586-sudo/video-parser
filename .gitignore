@@ -1,0 +1,20 @@
+# Python 虚拟环境与缓存
+.venv/
+__pycache__/
+*.pyc
+
+# 下载/测试产生的媒体文件（体积大，不入库）
+*.mp4
+*.m4a
+*.m4s
+*.webm
+*.flv
+*.ts
+*.mkv
+*.part
+*.part-*
+*.aria2
+
+# 登录态等本地数据（若被放进项目目录也排除）
+bili_login.json
+*.log
