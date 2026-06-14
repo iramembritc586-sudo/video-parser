@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>网页视频地址提取</title>
+<style>
+  :root { --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --fg:#e6e8ec;
+          --muted:#9aa0aa; --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font-family: system-ui, "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 20px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .bar { display:flex; gap:8px; margin-bottom:12px; }
+  input[type=text] { flex:1; padding:10px 12px; border-radius:8px;
+        border:1px solid var(--line); background:var(--card); color:var(--fg); font-size:14px; }
+  button { padding:10px 16px; border:none; border-radius:8px; background:var(--accent);
+        color:#fff; font-size:14px; cursor:pointer; white-space:nowrap; }
+  button.ghost { background:var(--card); border:1px solid var(--line); color:var(--fg); }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  .chip { font-size:12px; padding:3px 8px; border-radius:99px; background:var(--card);
+          border:1px solid var(--line); color:var(--muted); }
+  .chip.ok { color:var(--ok); border-color:#235; }
+  #title { font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; }
+  tr.sel { background:#23304a; }
+  tr.pick { cursor:pointer; }
+  .tag { font-size:11px; padding:2px 6px; border-radius:5px; background:#23304a; color:#cdf; }
+  .actions { position:sticky; bottom:0; background:var(--bg); padding:12px 0;
+             display:flex; gap:8px; flex-wrap:wrap; border-top:1px solid var(--line); margin-top:8px; }
+  video { width:100%; max-height:46vh; background:#000; border-radius:8px; margin-top:12px; display:none; }
+  #log { background:#0a0c10; border:1px solid var(--line); border-radius:8px; padding:8px 10px;
+         font:12px/1.5 monospace; color:#9aa0aa; height:90px; overflow:auto; margin-top:12px; white-space:pre-wrap; }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+           align-items:center; justify-content:center; }
+  .modal .box { background:var(--card); padding:24px; border-radius:12px; text-align:center; }
+  .modal img { width:220px; height:220px; background:#fff; border-radius:8px; }
+  .status { color:var(--muted); font-size:13px; margin-left:auto; }
+  a.dl { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>网页视频地址提取</h1>
+  <div class="sub">输入网页地址，提取视频流，可在线播放或下载（音视频自动合并）。支持 YouTube / B站 / 抖音 等。</div>
+
+  <div class="bar">
+    <input id="url" type="text" placeholder="粘贴视频网页地址，回车解析…" autofocus>
+    <button id="parseBtn" onclick="doParse()">解析</button>
+  </div>
+
+  <div class="row">
+    <button class="ghost" id="biliBtn" onclick="biliLogin()">登录B站</button>
+    <span class="chip" id="biliChip">B站: 检测中…</span>
+    <span id="title"></span>
+    <span class="chip" id="durChip" style="display:none"></span>
+  </div>
+
+  <div id="result" style="display:none">
+    <table>
+      <thead><tr><th>清晰度</th><th>编码/格式</th><th>类型</th><th>码率</th><th>大小</th><th>来源</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <video id="player" controls></video>
+    <div class="actions">
+      <button onclick="playSel()">▶ 在线播放</button>
+      <button onclick="downloadSel()">⬇ 下载选中</button>
+      <button class="ghost" onclick="copySel()">复制地址</button>
+      <span class="status" id="status"></span>
+    </div>
+  </div>
+
+  <div id="log"></div>
+</div>
+
+<div class="modal" id="loginModal">
+  <div class="box">
+    <h3>扫码登录 B 站</h3>
+    <p style="color:var(--muted)">请用手机 B 站 App 扫码</p>
+    <img id="qrImg" src="" alt="二维码">
+    <p id="loginTip" style="color:var(--muted)">加载中…</p>
+    <button class="ghost" onclick="closeLogin()">取消</button>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

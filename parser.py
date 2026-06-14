@@ -293,7 +293,11 @@ def bili_cookie_from_browser(browser: str = "chrome", log=lambda m: None) -> str
 import os
 import json as _json
 
-CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "video-parser")
+if os.name == "nt":  # Windows 放 %APPDATA%
+    CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"),
+                              "video-parser")
+else:
+    CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "video-parser")
 BILI_COOKIE_FILE = os.path.join(CONFIG_DIR, "bili_login.json")
 
 

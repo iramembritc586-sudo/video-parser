@@ -1,0 +1,8 @@
+# 核心依赖（全平台）
+yt-dlp>=2025.1.1
+Flask>=3.0
+qrcode[pil]>=7.4
+
+# 仅 Linux 需要：读取浏览器(Chrome)登录 Cookie 的可选功能
+# Windows/Mac 上 yt-dlp 用各自系统的方式读 Cookie，无需此包
+SecretStorage>=3.3 ; sys_platform == "linux"

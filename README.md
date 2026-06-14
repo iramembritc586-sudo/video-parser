@@ -1,18 +1,27 @@
 # 网页视频地址提取
 
-一个桌面 GUI 小程序：输入网页地址，提取其中真实的视频流地址（m3u8 / mp4 等），
-可复制地址、用系统播放器打开，或直接下载到本地。
+输入网页地址，提取真实视频流（m3u8 / mp4 等），可在线播放或下载到本地
+（视频/音频自动合并）。支持 YouTube / B站（含番剧）/ 抖音 等上千网站。
 
-## 运行
+提供两种界面：**网页版**（推荐，跨平台 Windows/Mac/Linux）和**桌面版**（tkinter）。
+
+## 运行 —— 网页版（推荐，跨平台）
+
+浏览器界面，Windows / Mac / Linux 都能用。
+
+- **Linux / macOS**：`./run-web.sh`
+- **Windows**：双击 `run-web.bat`
+
+首次运行会自动建虚拟环境、装依赖，然后开服务并打开浏览器（地址 http://127.0.0.1:8731 ）。
+
+> 需先装好 [Python 3](https://www.python.org/) 和 [ffmpeg](https://ffmpeg.org/)（下载合并必需）。
+> 可选：[mpv](https://mpv.io/)（本机播放器）、[aria2](https://aria2.github.io/)（多线程加速下载）。
+> Windows 把 ffmpeg/aria2 的 exe 放进 PATH 即可。
+
+## 运行 —— 桌面版（tkinter）
 
 ```bash
-./run.sh
-```
-
-或：
-
-```bash
-.venv/bin/python app.py
+./run.sh          # 或 .venv/bin/python app.py
 ```
 
 ## 功能
@@ -42,15 +51,29 @@
 
 ## 依赖
 
-- Python 3 + tkinter（界面，系统自带）
-- yt-dlp（已装在 `.venv/`，解析引擎）
-- ffmpeg（系统已装，用于直链 / m3u8 下载合并）
+- **Python 3**
+- **ffmpeg**（下载合并必需）
+- Python 包：见 `requirements.txt`（yt-dlp / Flask / qrcode 等，运行脚本会自动装）
+- 可选：**mpv**（桌面版本机播放）、**aria2**（多线程加速下载）
+
+手动安装依赖：
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt    # Windows: .venv\Scripts\pip install -r requirements.txt
+```
 
 更新 yt-dlp（网站改版导致解析失败时）：
 
 ```bash
 .venv/bin/pip install -U yt-dlp
 ```
+
+### Windows 提示
+
+- 装 [Python](https://www.python.org/)（勾选 Add to PATH）和 [ffmpeg](https://www.gyan.dev/ffmpeg/builds/)。
+- 双击 `run-web.bat` 即可，首次会自动装依赖。
+- B 站登录态存在 `%APPDATA%\video-parser\`。
 
 ## 说明
 

@@ -22,9 +22,19 @@ import parser as vp
 import downloader
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-YTDLP = os.path.join(HERE, ".venv", "bin", "yt-dlp")
-if not os.path.exists(YTDLP):
-    YTDLP = shutil.which("yt-dlp") or "yt-dlp"
+
+
+def _venv_tool(name):
+    """跨平台定位 venv 可执行文件（Windows: Scripts/*.exe；Unix: bin/*）。"""
+    for sub in ("Scripts", "bin"):
+        for ext in (".exe", ""):
+            p = os.path.join(HERE, ".venv", sub, name + ext)
+            if os.path.exists(p):
+                return p
+    return shutil.which(name) or name
+
+
+YTDLP = _venv_tool("yt-dlp")
 ARIA2 = shutil.which("aria2c")  # 多线程下载器，没装则为 None（退回单连接）
 
 
