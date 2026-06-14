@@ -255,6 +255,88 @@ def parse_raw(url: str, log=lambda m: None) -> ParseResult:
     return res
 
 
+def find_chrome() -> str:
+    """定位本机 Chrome/Chromium 可执行文件，找不到返回空串。"""
+    import os
+    import shutil
+    for name in ("google-chrome", "google-chrome-stable", "chromium",
+                 "chromium-browser", "chrome", "msedge"):
+        p = shutil.which(name)
+        if p:
+            return p
+    for p in (
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    ):
+        if os.path.exists(p):
+            return p
+    return ""
+
+
+_MEDIA_URL_RE = re.compile(
+    r"""https?://[^\s"'\\<>]+?\.(?:m3u8|mp4|flv|m4s|ts)(?:\?[^\s"'\\<>]*)?""",
+    re.IGNORECASE)
+
+
+def parse_headless(url: str, log=lambda m: None, wait_ms: int = 22000) -> ParseResult:
+    """用无头 Chrome 真正加载页面、跑 JS，从网络请求里捕获视频流地址。
+    适用于 yt-dlp/正则都搞不定的 JS 动态网站（如各类短剧站）。"""
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    from urllib.parse import urlparse
+
+    chrome = find_chrome()
+    if not chrome:
+        raise RuntimeError("未找到 Chrome/Chromium，无法用无头模式解析")
+
+    tmp = tempfile.mkdtemp(prefix="vp_hl_")
+    netlog = os.path.join(tmp, "net.json")
+    try:
+        cmd = [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+               "--mute-audio", "--disable-extensions",
+               f"--user-data-dir={os.path.join(tmp, 'prof')}",
+               f"--log-net-log={netlog}",
+               "--net-log-capture-mode=IncludeSensitive",
+               "--autoplay-policy=no-user-gesture-required",
+               f"--virtual-time-budget={wait_ms}", url]
+        log(f"用无头浏览器加载页面并捕获视频请求（约 {wait_ms // 1000} 秒）…")
+        try:
+            subprocess.run(cmd, capture_output=True,
+                           timeout=wait_ms / 1000 + 20)
+        except subprocess.TimeoutExpired:
+            pass  # 超时也可能已经抓到，继续解析 netlog
+
+        raw = ""
+        if os.path.exists(netlog):
+            raw = open(netlog, encoding="utf-8", errors="ignore").read()
+
+        origin = "{0.scheme}://{0.netloc}/".format(urlparse(url))
+        found: dict[str, Stream] = {}
+        for u in _MEDIA_URL_RE.findall(raw):
+            key = u.split("?")[0]
+            # 只保留"路径本身"以视频扩展名结尾的，排除把视频地址塞进查询串的统计信标
+            if not key.lower().endswith((".m3u8", ".mp4", ".flv", ".m4s", ".ts")):
+                continue
+            if key in found:
+                continue
+            ext = key.rsplit(".", 1)[-1].lower()
+            found[key] = Stream(
+                url=u, ext=ext,
+                protocol="hls" if ext == "m3u8" else "https",
+                referer=origin, source="browser")
+        res = ParseResult(webpage_url=url, streams=list(found.values()))
+        # m3u8 优先（通常是完整流），mp4 次之
+        res.streams.sort(key=lambda s: (s.ext != "m3u8", len(s.url)))
+        log(f"✓ 无头浏览器捕获到 {len(res.streams)} 个视频流")
+        return res
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ---------------- B 站原生解析（绕开 yt-dlp 的 412 风控） ----------------
 _BILI_MIXIN = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27,
                43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48,
@@ -599,8 +681,17 @@ def parse(url: str, log=lambda m: None, bili_cookie: str = "") -> ParseResult:
 
     try:
         res = parse_raw(url, log)
-        if not res.streams:
-            res.error = "未在该网页找到可识别的视频流地址"
-        return res
+        if res.streams:
+            return res
+        log("原始扫描无果，尝试无头浏览器捕获（JS 动态站）…")
+    except Exception as e:  # noqa: BLE001
+        log(f"原始扫描失败：{e}")
+
+    # 最后兜底：无头 Chrome 真正跑 JS，捕获网络里的视频流
+    try:
+        res = parse_headless(url, log)
+        if res.streams:
+            return res
+        return ParseResult(error="未捕获到视频流（可能需要登录/付费，或页面无视频）")
     except Exception as e:  # noqa: BLE001
         return ParseResult(error=f"解析失败：{e}")
