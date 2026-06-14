@@ -44,83 +44,105 @@ FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 app = Flask(__name__)
 
 # 单用户本地应用：用模块级状态即可
-STATE = {"streams": [], "page": "", "title": ""}
+STATE = {"streams": [], "pages": [], "page": "", "title": ""}
 JOBS: dict[str, dict] = {}          # 下载任务
 LOGIN = {"key": "", "cookie": ""}   # B 站登录会话
 
 
 # ---------------- 解析 ----------------
-@app.post("/api/parse")
-def api_parse():
-    url = (request.json or {}).get("url", "").strip()
-    if not url:
-        return jsonify(error="请输入网址"), 400
-    logs: list[str] = []
+def _codec(vc):
+    if vc.startswith("avc"):
+        return "H.264"
+    if vc.startswith(("hvc", "hev")):
+        return "H.265"
+    if "av01" in vc:
+        return "AV1"
+    return vc.split(".")[0] if vc and vc != "none" else ""
 
-    # 超时保护：某些网址会让 yt-dlp 卡死，超过 45 秒就返回提示而非无限等待
-    box: dict = {}
+
+def _mse_type(s):
+    """分离流走 MSE 播放所需的 MIME codecs 串；浏览器不支持的(如HEVC)返回空。"""
+    if not s.audio_url:
+        return ""
+    vc, ac = s.vcodec, s.acodec
+    if vc.startswith(("hev", "hvc")):
+        return ""
+    if vc == "vp9":
+        vc = "vp09.00.40.08"
+    if ac in ("", "none") or (not ac.startswith("mp4a") and "opus" not in ac):
+        ac = "mp4a.40.2"
+    if "opus" in ac:
+        ac = "opus"
+    return f'video/mp4; codecs="{vc},{ac}"'
+
+
+def _stream_dict(i, s):
+    return {
+        "i": i,
+        "quality": (f"{s.note} ({s.resolution})" if s.note and s.resolution
+                    else s.note or s.resolution or "-"),
+        "codec": _codec(s.vcodec) if s.vcodec not in ("", "none") else (s.ext or "-"),
+        "kind": s.kind,
+        "tbr": round(s.tbr) if s.tbr else None,
+        "size": s.size_human,
+        "ext": s.ext, "protocol": s.protocol, "source": s.source,
+        "needs_referer": bool(s.referer), "split": bool(s.audio_url),
+        "mse": _mse_type(s),
+    }
+
+
+def _parse_one(url, logs):
+    box = {}
 
     def work():
         try:
             box["res"] = vp.parse(url, log=logs.append)
         except Exception as e:  # noqa: BLE001
             box["res"] = vp.ParseResult(error=f"解析出错：{e}")
-
     th = threading.Thread(target=work, daemon=True)
     th.start()
-    th.join(45)
+    th.join(60)
     if th.is_alive():
-        return jsonify(error="解析超时（该网址可能不支持，或网络太慢）。"
-                             "请检查网址，或换一个试试。", logs=logs[-8:]), 200
-    res = box.get("res")
-    if res is None or (res.error and not res.streams):
-        return jsonify(error=(res.error if res else "解析失败"), logs=logs), 200
-    STATE["streams"] = res.streams
-    STATE["page"] = res.webpage_url or url
-    STATE["title"] = res.title
+        return vp.ParseResult(error="解析超时（该网址可能不支持，或网络太慢）")
+    return box.get("res") or vp.ParseResult(error="解析失败")
 
-    def codec(vc):
-        if vc.startswith("avc"):
-            return "H.264"
-        if vc.startswith(("hvc", "hev")):
-            return "H.265"
-        if "av01" in vc:
-            return "AV1"
-        return vc.split(".")[0] if vc and vc != "none" else ""
 
-    def mse_type(s):
-        """分离流走 MSE 播放所需的 MIME codecs 串；浏览器不支持的(如HEVC)返回空。"""
-        if not s.audio_url:
-            return ""
-        vc, ac = s.vcodec, s.acodec
-        # 归一化常见编码到 RFC6381
-        if vc.startswith(("hev", "hvc")):   # Chrome 多不支持 HEVC，MSE 会失败
-            return ""
-        if vc == "vp9":
-            vc = "vp09.00.40.08"
-        if ac in ("", "none") or ac.startswith("mp4a") is False and "opus" not in ac:
-            ac = "mp4a.40.2"
-        if "opus" in ac:
-            ac = "opus"
-        return f'video/mp4; codecs="{vc},{ac}"'
+@app.post("/api/parse")
+def api_parse():
+    body = request.json or {}
+    raw = body.get("url", "")
+    # 支持批量：按换行/空白拆成多个网址
+    urls = [u.strip() for u in _re.split(r"[\r\n]+", raw) if u.strip()]
+    if not urls:
+        return jsonify(error="请输入网址"), 400
 
-    streams = [{
-        "i": i,
-        "quality": (f"{s.note} ({s.resolution})" if s.note and s.resolution
-                    else s.note or s.resolution or "-"),
-        "codec": codec(s.vcodec) if s.vcodec not in ("", "none") else (s.ext or "-"),
-        "kind": s.kind,
-        "tbr": round(s.tbr) if s.tbr else None,
-        "size": s.size_human,
-        "ext": s.ext,
-        "protocol": s.protocol,
-        "source": s.source,
-        "needs_referer": bool(s.referer),
-        "split": bool(s.audio_url),
-        "mse": mse_type(s),
-    } for i, s in enumerate(res.streams)]
-    return jsonify(title=res.title, duration=res.duration_human,
-                   count=len(streams), streams=streams, logs=logs)
+    STATE["streams"] = []
+    STATE["pages"] = []
+    logs: list[str] = []
+    videos = []
+    for url in urls:
+        if len(urls) > 1:
+            logs.append(f"—— 解析：{url} ——")
+        res = _parse_one(url, logs)
+        if res.error and not res.streams:
+            videos.append({"title": url[:50], "error": res.error, "streams": []})
+            continue
+        page = res.webpage_url or url
+        sds = []
+        for s in res.streams:
+            gi = len(STATE["streams"])
+            STATE["streams"].append(s)
+            STATE["pages"].append(page)
+            sds.append(_stream_dict(gi, s))
+        videos.append({"title": res.title or "(无标题)",
+                       "duration": res.duration_human, "streams": sds})
+
+    STATE["title"] = videos[0]["title"] if videos else ""
+    total = len(STATE["streams"])
+    if total == 0:
+        return jsonify(error=videos[0].get("error", "未找到视频流") if videos
+                       else "未找到视频流", logs=logs, videos=videos), 200
+    return jsonify(videos=videos, count=total, batch=len(urls) > 1, logs=logs)
 
 
 # ---------------- 浏览器内播放 ----------------
@@ -184,14 +206,42 @@ def api_play(i):
 
 
 # ---------------- 下载（服务端下载合并 → 发给浏览器） ----------------
+import re as _re
+_PCT_RES = [
+    _re.compile(r"\((\d{1,3})%\)"),              # aria2c: (24%)
+    _re.compile(r"\[download\]\s+(\d{1,3}(?:\.\d)?)%"),  # yt-dlp: [download] 45.2%
+]
+
+
+def _parse_percent(line):
+    for rx in _PCT_RES:
+        m = rx.search(line)
+        if m:
+            try:
+                return min(100, int(float(m.group(1))))
+            except ValueError:
+                pass
+    return None
+
+
 def _download_job(job_id, s, page, out):
     job = JOBS[job_id]
+
+    def on_log(m):
+        job["line"] = m[:120]
+        p = _parse_percent(m)
+        if p is not None:
+            job["percent"] = p
+
     try:
         ok = downloader.download(
-            s, page, out, log=lambda m: job.update(line=m[:120]),
-            ytdlp=YTDLP, aria2=ARIA2, status=lambda m: job.update(status=m))
+            s, page, out, log=on_log,
+            ytdlp=YTDLP, aria2=ARIA2,
+            status=lambda m: (job.update(status=m), job.update(percent=None)))
         job["state"] = "done" if ok and os.path.exists(out) else "failed"
         job["file"] = out if ok else ""
+        if job["state"] == "done":
+            job["percent"] = 100
     except Exception as e:  # noqa: BLE001
         job["state"] = "failed"
         job["line"] = str(e)[:120]
@@ -201,6 +251,7 @@ def _start_job(i):
     if i >= len(STATE["streams"]):
         return None
     s = STATE["streams"][i]
+    page = STATE["pages"][i] if i < len(STATE.get("pages", [])) else STATE.get("page", "")
     job_id = uuid.uuid4().hex
     safe = "".join(c for c in (STATE["title"] or "video")
                    if c.isalnum() or c in " _-")[:60].strip() or "video"
@@ -208,7 +259,7 @@ def _start_job(i):
     out = os.path.join(tmpdir, f"{safe}.mp4")
     JOBS[job_id] = {"state": "running", "status": "开始下载…", "line": "",
                     "name": os.path.basename(out)}
-    threading.Thread(target=_download_job, args=(job_id, s, STATE["page"], out),
+    threading.Thread(target=_download_job, args=(job_id, s, page, out),
                      daemon=True).start()
     return job_id
 
@@ -225,7 +276,8 @@ def api_dl_status(job_id):
     if not job:
         return jsonify(error="任务不存在"), 404
     return jsonify(state=job["state"], status=job.get("status", ""),
-                   line=job.get("line", ""), name=job.get("name", ""))
+                   line=job.get("line", ""), name=job.get("name", ""),
+                   percent=job.get("percent"))
 
 
 @app.get("/api/download/file/<job_id>")

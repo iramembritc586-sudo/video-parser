@@ -14,8 +14,13 @@
   h1 { font-size: 20px; margin: 0 0 4px; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
   .bar { display:flex; gap:8px; margin-bottom:12px; }
-  input[type=text] { flex:1; padding:10px 12px; border-radius:8px;
-        border:1px solid var(--line); background:var(--card); color:var(--fg); font-size:14px; }
+  input[type=text], textarea { flex:1; padding:10px 12px; border-radius:8px;
+        border:1px solid var(--line); background:var(--card); color:var(--fg);
+        font-size:14px; font-family:inherit; resize:vertical; }
+  .vidhead { margin:14px 0 4px; font-weight:600; color:#cdd; font-size:14px; }
+  .vidhead small { color:var(--muted); font-weight:400; margin-left:8px; }
+  #progwrap { height:6px; background:var(--line); border-radius:99px; margin:6px 0 2px; overflow:hidden; display:none; }
+  #progbar { height:100%; width:0; background:var(--accent); transition:width .3s; }
   button { padding:10px 16px; border:none; border-radius:8px; background:var(--accent);
         color:#fff; font-size:14px; cursor:pointer; white-space:nowrap; }
   button.ghost { background:var(--card); border:1px solid var(--line); color:var(--fg); }
@@ -53,7 +58,7 @@
   <div class="sub">输入网页地址，提取视频流，可在线播放或下载（音视频自动合并）。支持 YouTube / B站 / 抖音 等。</div>
 
   <div class="bar">
-    <input id="url" type="text" placeholder="粘贴视频网页地址，回车解析…" autofocus>
+    <textarea id="url" rows="1" placeholder="粘贴视频网页地址（可多行，每行一个批量解析），回车解析…" autofocus></textarea>
     <button class="ghost" onclick="pasteUrl()">粘贴</button>
     <button id="parseBtn" onclick="doParse()">解析</button>
   </div>
@@ -78,10 +83,8 @@
       <button class="ghost" onclick="copySel()">复制地址</button>
       <span class="status" id="status"></span>
     </div>
-    <table>
-      <thead><tr><th>清晰度</th><th>编码/格式</th><th>类型</th><th>码率</th><th>大小</th><th>来源</th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
+    <div id="progwrap"><div id="progbar"></div></div>
+    <div id="videos"></div>
   </div>
 
   <div id="log"></div>

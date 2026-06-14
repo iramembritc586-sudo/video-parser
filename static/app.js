@@ -10,7 +10,9 @@ function log(msg) {
 }
 function setStatus(m) { $("status").textContent = m; }
 
-$("url").addEventListener("keydown", (e) => { if (e.key === "Enter") doParse(); });
+$("url").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doParse(); }
+});
 
 async function pasteUrl() {
   try {
@@ -41,13 +43,16 @@ async function doParse() {
     });
     const d = await r.json();
     (d.logs || []).forEach(log);
-    if (d.error && !(d.streams && d.streams.length)) {
+    if (d.error && !(d.count)) {
       setStatus("解析失败"); alert("解析失败：" + d.error); return;
     }
-    streams = d.streams;
-    $("title").textContent = d.title || "(无标题)";
-    if (d.duration) { $("durChip").style.display = ""; $("durChip").textContent = "时长 " + d.duration; }
-    renderRows();
+    // 扁平化所有视频的流
+    streams = [];
+    (d.videos || []).forEach((v) => (v.streams || []).forEach((s) => streams.push(s)));
+    const n = (d.videos || []).filter((v) => v.streams.length).length;
+    $("title").textContent = d.batch ? `已解析 ${n} 个视频` : (d.videos[0] && d.videos[0].title) || "";
+    $("durChip").style.display = "none";
+    renderVideos(d.videos || []);
     $("result").style.display = "";
     setStatus(`完成，共 ${d.count} 个视频流`);
   } catch (e) {
@@ -58,28 +63,44 @@ async function doParse() {
   }
 }
 
-function renderRows() {
-  const tb = $("rows");
-  tb.innerHTML = "";
-  streams.forEach((s) => {
-    const tr = document.createElement("tr");
-    tr.className = "pick";
-    tr.onclick = () => selectRow(s.i);
-    tr.ondblclick = () => selectAndPlay(s.i);
-    tr.title = "双击直接播放";
-    tr.id = "row" + s.i;
-    const tags = [];
-    if (s.needs_referer) tags.push('<span class="tag">防盗链</span>');
-    tr.innerHTML = `<td>${s.quality} ${tags.join("")}</td><td>${s.codec}</td>
-      <td>${s.kind}</td><td>${s.tbr || "-"}</td><td>${s.size}</td><td>${s.source}</td>`;
-    tb.appendChild(tr);
+function renderVideos(videos) {
+  const box = $("videos");
+  box.innerHTML = "";
+  const multi = videos.length > 1;
+  videos.forEach((v) => {
+    if (multi || v.error) {
+      const h = document.createElement("div");
+      h.className = "vidhead";
+      h.innerHTML = v.error
+        ? `⚠ ${v.title} <small>${v.error}</small>`
+        : `${v.title} <small>${v.duration ? "时长 " + v.duration + " · " : ""}${v.streams.length} 个流</small>`;
+      box.appendChild(h);
+    }
+    if (!v.streams.length) return;
+    const tbl = document.createElement("table");
+    tbl.innerHTML = `<thead><tr><th>清晰度</th><th>编码/格式</th><th>类型</th>
+      <th>码率</th><th>大小</th><th>来源</th></tr></thead><tbody></tbody>`;
+    const tb = tbl.querySelector("tbody");
+    v.streams.forEach((s) => {
+      const tr = document.createElement("tr");
+      tr.className = "pick";
+      tr.onclick = () => selectRow(s.i);
+      tr.ondblclick = () => selectAndPlay(s.i);
+      tr.title = "双击直接播放";
+      tr.id = "row" + s.i;
+      const tag = s.needs_referer ? '<span class="tag">防盗链</span>' : "";
+      tr.innerHTML = `<td>${s.quality} ${tag}</td><td>${s.codec}</td>
+        <td>${s.kind}</td><td>${s.tbr || "-"}</td><td>${s.size}</td><td>${s.source}</td>`;
+      tb.appendChild(tr);
+    });
+    box.appendChild(tbl);
   });
-  if (streams.length) selectRow(0);
+  if (streams.length) selectRow(streams[0].i);
 }
 
 function selectRow(i) {
   sel = i;
-  document.querySelectorAll("#rows tr").forEach((tr) => tr.classList.remove("sel"));
+  document.querySelectorAll("#videos tr").forEach((tr) => tr.classList.remove("sel"));
   const tr = $("row" + i); if (tr) tr.classList.add("sel");
 }
 
@@ -112,13 +133,22 @@ async function previewSplit() {
   pollPreview(d.job);
 }
 
+function setProgress(p) {
+  const w = $("progwrap"), b = $("progbar");
+  if (p === null || p === undefined) { w.style.display = "none"; b.style.width = "0"; }
+  else { w.style.display = "block"; b.style.width = p + "%"; }
+}
+function pctLabel(d) { return (d.percent || d.percent === 0) ? ` ${d.percent}%` : ""; }
+
 async function pollPreview(job) {
   const d = await (await fetch("/api/download/status/" + job)).json();
   if (d.state === "running") {
-    if (d.line) setStatus("缓冲中 — " + d.line);
+    setProgress(d.percent);
+    setStatus("缓冲中" + pctLabel(d) + (d.line ? " — " + d.line : "…"));
     setTimeout(() => pollPreview(job), 1000);
     return;
   }
+  setProgress(null);
   if (d.state === "done") {
     const v = $("player");
     v.src = "/api/preview/file/" + job;
@@ -142,9 +172,13 @@ async function downloadSel() {
 async function pollDownload(job) {
   const r = await fetch("/api/download/status/" + job);
   const d = await r.json();
-  if (d.line) setStatus((d.status || "下载中") + " — " + d.line);
-  else setStatus(d.status || "下载中…");
-  if (d.state === "running") { setTimeout(() => pollDownload(job), 1000); return; }
+  if (d.state === "running") {
+    setProgress(d.percent);
+    setStatus("下载中" + pctLabel(d) + (d.line ? " — " + d.line : "…"));
+    setTimeout(() => pollDownload(job), 1000);
+    return;
+  }
+  setProgress(null);
   if (d.state === "done") {
     setStatus("✓ 下载完成，正在保存到浏览器…");
     window.location = "/api/download/file/" + job;

@@ -252,7 +252,53 @@ def parse_raw(url: str, log=lambda m: None) -> ParseResult:
 
     res.streams = list(found.values())
     log(f"扫描到 {len(res.streams)} 个候选直链")
+    if res.streams:
+        _ffprobe_fill(res.streams, log)
     return res
+
+
+def _ffprobe_stream(s: "Stream", timeout: int = 15):
+    """用 ffprobe 探测一条流，补全分辨率/编码/码率（用于无头/正则抓到的裸地址）。"""
+    import subprocess
+    import json as _j
+    cmd = ["ffprobe", "-v", "quiet", "-print_format", "json",
+           "-show_streams", "-show_format"]
+    if s.referer:
+        cmd += ["-headers", f"Referer: {s.referer}\r\nUser-Agent: {UA}\r\n"]
+    cmd += [s.url]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        d = _j.loads(r.stdout)
+    except Exception:  # noqa: BLE001
+        return
+    vids = [x for x in d.get("streams", []) if x.get("codec_type") == "video"]
+    auds = [x for x in d.get("streams", []) if x.get("codec_type") == "audio"]
+    if vids:
+        v = vids[0]
+        w, h = v.get("width"), v.get("height")
+        if w and h:
+            s.resolution = f"{w}x{h}"
+            s.note = f"{h}p"
+        s.vcodec = v.get("codec_name") or s.vcodec
+    if auds:
+        s.acodec = auds[0].get("codec_name") or s.acodec
+    fmt = d.get("format", {})
+    if fmt.get("bit_rate"):
+        try:
+            s.tbr = round(int(fmt["bit_rate"]) / 1000)
+        except (ValueError, TypeError):
+            pass
+
+
+def _ffprobe_fill(streams, log=lambda m: None, limit: int = 8):
+    """并行 ffprobe 一批流，补全清晰度信息（最多探测 limit 条，省时间）。"""
+    import concurrent.futures
+    todo = streams[:limit]
+    if not todo:
+        return
+    log(f"用 ffprobe 探测 {len(todo)} 个流的清晰度…")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(todo))) as ex:
+        list(ex.map(_ffprobe_stream, todo))
 
 
 def find_chrome() -> str:
@@ -332,6 +378,10 @@ def parse_headless(url: str, log=lambda m: None, wait_ms: int = 22000) -> ParseR
         # m3u8 优先（通常是完整流），mp4 次之
         res.streams.sort(key=lambda s: (s.ext != "m3u8", len(s.url)))
         log(f"✓ 无头浏览器捕获到 {len(res.streams)} 个视频流")
+        _ffprobe_fill(res.streams, log)
+        res.streams.sort(key=lambda s: (s.ext != "m3u8",
+                                        -(int(s.resolution.split("x")[1])
+                                          if "x" in s.resolution else 0)))
         return res
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
