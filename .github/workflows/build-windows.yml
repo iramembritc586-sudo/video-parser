@@ -1,0 +1,66 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:        # 手动触发
+  push:
+    tags: ["v*"]            # 推送 v 开头的标签时自动构建并发布
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write       # 允许创建 Release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller yt-dlp "qrcode[pil]" pillow
+
+      - name: 下载并捆绑外部程序 (ffmpeg / ffprobe / aria2 / yt-dlp)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          # ffmpeg + ffprobe
+          curl -L -o ff.zip https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip
+          Expand-Archive ff.zip -DestinationPath ffx -Force
+          Copy-Item (Get-ChildItem ffx -Recurse -Filter ffmpeg.exe)[0].FullName bin\ffmpeg.exe
+          Copy-Item (Get-ChildItem ffx -Recurse -Filter ffprobe.exe)[0].FullName bin\ffprobe.exe
+          # aria2
+          curl -L -o aria2.zip https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip
+          Expand-Archive aria2.zip -DestinationPath ar -Force
+          Copy-Item (Get-ChildItem ar -Recurse -Filter aria2c.exe)[0].FullName bin\aria2c.exe
+          # yt-dlp 独立 exe
+          curl -L -o bin\yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+
+      - name: PyInstaller 打包
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name video-parser `
+            --collect-all yt_dlp --collect-all qrcode `
+            --add-binary "bin/ffmpeg.exe;." `
+            --add-binary "bin/ffprobe.exe;." `
+            --add-binary "bin/aria2c.exe;." `
+            --add-binary "bin/yt-dlp.exe;." `
+            app.py
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-parser-windows
+          path: dist/video-parser.exe
+
+      - name: 发布到 Release (仅打标签时)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/video-parser.exe
+          name: ${{ github.ref_name }}
+          body: |
+            video-parser 桌面版 Windows 可执行程序（已内置 ffmpeg / yt-dlp / aria2）。
+            双击 video-parser.exe 即用。

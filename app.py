@@ -23,9 +23,18 @@ import downloader
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# 打包成 exe(PyInstaller)后：把捆绑目录加入 PATH，使 ffmpeg/aria2c/yt-dlp 能被找到
+if getattr(sys, "frozen", False):
+    _bundle = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    os.environ["PATH"] = (_bundle + os.pathsep
+                          + os.path.dirname(sys.executable) + os.pathsep
+                          + os.environ.get("PATH", ""))
+
 
 def _venv_tool(name):
-    """跨平台定位 venv 可执行文件（Windows: Scripts/*.exe；Unix: bin/*）。"""
+    """定位可执行文件：打包后用 PATH；开发时用 venv（Win: Scripts/*.exe；Unix: bin/*）。"""
+    if getattr(sys, "frozen", False):
+        return shutil.which(name) or name
     for sub in ("Scripts", "bin"):
         for ext in (".exe", ""):
             p = os.path.join(HERE, ".venv", sub, name + ext)
